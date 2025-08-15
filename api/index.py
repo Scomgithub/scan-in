@@ -17,6 +17,9 @@ app = FastAPI()
 
 # Initialize Telegram Bot
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+if not TOKEN:
+    logger.error("TELEGRAM_BOT_TOKEN not set")
+    raise ValueError("TELEGRAM_BOT_TOKEN environment variable is missing")
 bot = Bot(token=TOKEN)
 dispatcher = Dispatcher(bot, None, workers=0)
 
@@ -35,9 +38,17 @@ def handle_image(update, context):
         photo = update.message.photo[-1]  # Get the highest resolution photo
         file = photo.get_file()
         file_bytes = file.download_as_bytearray()
-
-        # Open image with PIL
-        image = Image.open(io.BytesIO(file_bytes))
+        
+        # Open image with PIL, explicitly setting format to avoid imghdr
+        try:
+            image = Image.open(io.BytesIO(file_bytes))
+            # Convert to RGB if needed (some barcode formats require it)
+            if image.mode != "RGB":
+                image = image.convert("RGB")
+        except Exception as e:
+            logger.error(f"Error opening image: {e}")
+            update.message.reply_text("Failed to process the image. Please ensure it's a valid image file.")
+            return
 
         # Decode barcode
         barcodes = decode(image)
@@ -61,14 +72,12 @@ dispatcher.add_handler(MessageHandler(Filters.PHOTO, handle_image))
 @app.post("/webhook")
 async def webhook(request: Request):
     try:
-        # Get the JSON payload from Telegram
         update = Update.de_json(await request.json(), bot)
+        if update is None:
+            logger.error("Invalid update received")
+            return {"message": "invalid update"}, 400
         await dispatcher.process_update(update)
         return {"message": "ok"}
     except Exception as e:
-        logger.error(f"Error processing webhook: {e}")
-        return {"message": "error"}, 500
-
-@app.get("/")
-async def index():
-    return {"message": "Hello World"}
+        logger.error(f"Webhook error: {e}")
+        return {"message": str
